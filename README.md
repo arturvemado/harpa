@@ -1,5 +1,10 @@
 <div align="center">
-  <img src="HARPA_logo.png" alt="HARPA logo" width="400" />
+  <img 
+    src="HARPA_logo.png" 
+    alt="HARPA logo" 
+    width="400"
+    style="background-color: white; padding: 20px; border-radius: 12px;"
+  />
 </div>
 
 # HARPA

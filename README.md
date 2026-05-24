@@ -2,7 +2,7 @@
   <img 
     src="HARPA_logo.png" 
     alt="HARPA logo" 
-    width="400"
+    width="2000"
   />
 </div>
 

@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import logging
 import os
-import warnings
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +24,8 @@ from harpa.bolsai.exceptions import (
     BolsaiRateLimitError,
 )
 from harpa.bolsai.tickers import DEFAULT_BASE_URL
+
+logger = logging.getLogger(__name__)
 
 
 def _csv_cell(value: Any) -> Any:
@@ -120,9 +122,11 @@ class BolsaiFundamentalsClient:
 
         Each row is one quarter: ``ticker``, ``corporate_name``, then every key
         present in that quarter's ``history`` object. Column union is built across
-        all rows; missing values are empty. Tickers that return 403/404 or empty
-        ``history`` are skipped with a warning. :class:`BolsaiRateLimitError` is
-        re-raised so callers can retry later.
+        all rows; missing values are empty. Tickers that return 403/404, HTTP
+        5xx (server errors, including persistent ``internal_server_error`` for
+        some symbols), or empty ``history`` are skipped; each ticker is logged
+        as success (✅) or failure (❌) with details. :class:`BolsaiRateLimitError`
+        is re-raised so callers can retry later.
         """
         if not 1 <= limit <= 80:
             raise ValueError("limit must be between 1 and 80 (Bolsai API).")
@@ -141,22 +145,21 @@ class BolsaiFundamentalsClient:
                 except BolsaiRateLimitError:
                     raise
                 except BolsaiHTTPError as e:
-                    if e.status_code in (403, 404):
-                        warnings.warn(
-                            f"Skipping {ticker!r}: HTTP {e.status_code}.",
-                            stacklevel=1,
-                        )
+                    if e.status_code in (403, 404) or 500 <= e.status_code < 600:
+                        logger.info("❌ %s: %s", ticker, e)
                         continue
+                    logger.info("❌ %s: %s", ticker, e)
                     raise
 
                 history = data.get("history") or []
                 if not history:
-                    warnings.warn(f"Skipping {ticker!r}: empty history.", stacklevel=1)
+                    logger.info("❌ %s: empty history", ticker)
                     continue
 
                 corporate_name = str(data.get("corporate_name") or "")
                 resp_ticker = str(data.get("ticker") or ticker)
 
+                n_quarters = 0
                 for item in history:
                     if not isinstance(item, dict):
                         continue
@@ -165,6 +168,15 @@ class BolsaiFundamentalsClient:
                     row["ticker"] = resp_ticker
                     row["corporate_name"] = corporate_name
                     rows.append(row)
+                    n_quarters += 1
+
+                if n_quarters == 0:
+                    logger.info(
+                        "❌ %s: history had no dict-shaped quarter entries",
+                        ticker,
+                    )
+                else:
+                    logger.info("✅ %s (%d quarter row(s))", ticker, n_quarters)
 
         extra_keys = sorted(history_key_union - {"ticker", "corporate_name"})
         fieldnames = ["ticker", "corporate_name"] + extra_keys
@@ -210,6 +222,8 @@ def main() -> None:
         help="Number of quarterly history points per ticker (1-80, default: 80).",
     )
     args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     client = BolsaiFundamentalsClient()
     path = client.save_historical_fundamentals_csv(
